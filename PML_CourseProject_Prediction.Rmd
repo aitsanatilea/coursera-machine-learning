@@ -1,0 +1,228 @@
+---
+title: "Practical Machine Learning. Course Project. Prediction Assignment Writeup"
+author: "Anastasiia Alieksieienko"
+date: "7/9/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, comment = "")
+```
+
+```{r setworkdir, echo=FALSE}
+setwd("/Users/anastasia/Study/course8/assignment")
+```
+
+## Overview 
+In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise. 
+
+The original data was preprocessed to remove NA and empty columns using dplyr package and imputed some of the missing values in the remaining ones. Then 6 models (lda, lda2, rf, gbm, knn and kknn) were fitted with cross-validation using caret library. Comparison of the models on the validation subset showed that Random forest model has the highest accuracy. The selected model then was applied to the test data set.
+
+
+## Loading and Preprocessing the Data
+The following code loads csv files with training and testing data to the current working directory and then reads them in. 
+```{r load_data, cache=TRUE}
+trainUrl<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(trainUrl,destfile=paste0(getwd(),"/pml-training.csv"), method = "curl")
+download.file(testUrl,destfile=paste0(getwd(),"/pml-testing.csv"), method = "curl")
+pmlTrain<-read.csv("pml-training.csv", stringsAsFactors = FALSE)
+pmlTest<-read.csv("pml-testing.csv", stringsAsFactors = FALSE)
+```
+The training data set contains of `r nrow(pmlTrain)` observations on `r ncol(pmlTrain)` variables.
+There are a lot of columns containing mostly NAs or "" in the training data set, so I've removed them both from training and testing data sets. I've also excluded variables 1:7 that are not relevant for predicting the way the excercise was done.
+```{r removing_na, cache=TRUE}
+library(dplyr)
+# Removing columns with NA values
+csum<-colSums(is.na(pmlTrain))
+nanames<-names(csum[csum>19000])
+pmlTrain2<-select(pmlTrain, -c(nanames))
+pmlTesting<-select(pmlTest, -c(nanames))
+# Removing columns with empty values
+csum<-colSums(pmlTrain2=="")
+nanames<-names(csum[csum>19000])
+pmlTrain2<-select(pmlTrain2, -c(nanames))
+pmlTesting<-select(pmlTesting, -c(nanames))
+# Removing irrelevant columns
+pmlTrain2<-pmlTrain2[,-(1:7)]
+pmlTesting<-pmlTesting[,-(1:7)]
+```
+```{r checking_na, echo=FALSE}
+# Checking for NA both in train and test data sets
+#which(!complete.cases(pmlTrain2)); which(!complete.cases(pmlTest2))
+```
+Next step is to check the remaining columns for zero/near-zero values and remove those if there are any. 
+```{r removing_nzv, results="hide", cache=TRUE}
+library(caret)
+nzv<-nearZeroVar(pmlTrain2, saveMetrics = TRUE)
+nzv 
+```
+As we can see  - all are false, so there is nothing to remove.
+```{r result_removing_nzv, ref.label='removing_nzv', eval=TRUE, echo=FALSE}
+```
+After the procedure the number of variables decreased to `r ncol(pmlTrain2)`. Since there are a lot of observations in training set we can split it in two subsets: training (75%) and validation (25%) in order to find out what model is better before applying it to the test set. 
+```{r}
+pmlTrain2$classe<-as.factor(pmlTrain2$classe)
+```
+
+```{r creating_subsets}
+library(caret)
+set.seed(12345)
+inTrain<-createDataPartition(y=pmlTrain2$classe, p=0.75, list = FALSE)
+pmlValidation<-pmlTrain2[-inTrain,]
+pmlTraining<-pmlTrain2[inTrain,]
+```
+
+## Fitting models
+Since many models utilize random numbers during the phase where parameters are estimated and to ensure that the same resamples are used between calls to train we'll use *set.seed* prior to every call to *train* function. We will fit 6 models: 
+
+* Two types of Linear Discriminant Analysis - lda, lda2
+* Random Forest - rf
+* Generalized Boosted Regression Model - gbm 
+* Two types of K-Nearest Neighbours - knn, kknn  
+
+For every model we'll use **Cross-Validation** by applying *trControl=trainControl(method="cv", number=3)*. Then we'll predict *classe* variable for Validation data set and build confusion matrices.
+
+### Linear Discriminant Analysis
+
+```{r model_lda, cache=TRUE}
+set.seed(12345)
+fitlda<-train(classe~., data=pmlTraining, method="lda", preProcess="knnImpute",
+              trControl=trainControl(method="cv", number=3))
+vPredict<-predict(fitlda, pmlValidation)
+cmlda<-confusionMatrix(pmlValidation$classe,vPredict); cmlda
+```
+
+```{r model_lda2, cache=TRUE}
+set.seed(12345)
+fitlda2<-train(classe~., data=pmlTraining, method="lda2", preProcess="knnImpute",
+              trControl=trainControl(method="cv", number=3))
+vPredict<-predict(fitlda2, pmlValidation)
+cmlda2<-confusionMatrix(pmlValidation$classe,vPredict); cmlda2
+```
+
+### Random Forests
+
+```{r model_rf, cache=TRUE}
+set.seed(12345)
+fitrf<-train(classe~., data=pmlTraining, method="rf", preProcess="knnImpute",
+             trControl=trainControl(method="cv", number=3))
+vPredict<-predict(fitrf, pmlValidation)
+cmrf<-confusionMatrix(pmlValidation$classe,vPredict); cmrf
+```
+
+### Generalized Boosted Regression Model  
+
+```{r model_gbm, cache=TRUE}
+set.seed(12345)
+fitgbm<-train(classe~., data=pmlTraining, method="gbm", preProcess="knnImpute",
+              trControl=trainControl(method="cv", number=3), verbose=FALSE)
+vPredict<-predict(fitgbm, pmlValidation)
+cmgbm<-confusionMatrix(pmlValidation$classe,vPredict); cmgbm
+```
+
+### K-Nearest Neighbor Classifier
+
+```{r model_knn, cache=TRUE}
+set.seed(12345)
+fitknn<-train(classe~., data=pmlTraining, method="knn", preProcess="knnImpute",
+              trControl=trainControl(method="cv", number=3))
+vPredict<-predict(fitknn, pmlValidation)
+cmknn<-confusionMatrix(pmlValidation$classe,vPredict); cmknn
+```
+
+### Weighted k-Nearest Neighbor Classifier
+
+```{r model_kknn, cache=TRUE}
+library(kknn)
+set.seed(12345)
+fitkknn<-train(classe~., data=pmlTraining, method="kknn", preProcess="knnImpute",
+              trControl=trainControl(method="cv", number=3))
+vPredict<-predict(fitkknn, pmlValidation)
+cmkknn<-confusionMatrix(pmlValidation$classe,vPredict); cmkknn
+```
+
+```{r multiplot, echo=FALSE}
+# Multiple plot function 
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+ if (numPlots==1) {
+    print(plots[[1]])
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+### Plots for tuning parameters
+
+Since here are no tuning parameters for lda model, there is nothing to plot.
+```{r plots, fig.align='center', fig.width=12, cache=FALSE}
+p1<-ggplot(fitlda2) + labs(title="lda2") + theme_bw()
+p2<-ggplot(fitrf) + labs(title="rf") + theme_bw()
+p3<-ggplot(fitgbm) + labs(title="gbm") + theme_bw()
+p4<-ggplot(fitknn) + labs(title="knn") + theme_bw()
+p5<-ggplot(fitkknn) + labs(title="kknn") + theme_bw()
+multiplot(p1, p4, p2, p5, p3, cols=3)
+```
+
+### Accuracy comparison
+
+Random forest and both KNN models have the best accuracy, but RF is even more precise, so I'll choose it for predicting for the test data set.
+```{r accuracy_comparison}
+accuracyDF<-data.frame(Model=c("lda", "lda2", "rf", "gbm", "knn", "kknn"),
+                       Accuracy=c(cmlda$overall[1], cmlda2$overall[1], cmrf$overall[1],
+                                  cmgbm$overall[1], cmknn$overall[1], cmkknn$overall[1]))
+accuracyDF
+```
+
+## Predicting for Test Data
+
+Let's predict the style of doing exercises for the test data set using trained Random Forest model with Cross Validation.
+
+```{r predict_test}
+testPredict<-predict(fitrf, pmlTesting)
+testPredict
+```
+
+## Conclusion
+  
+#### Random forest model gives the highest accuracy - `r cmrf$overall[1]` - on the validation data, so it was used to predict the outcomes for the test data set.
+
+
+
+
+
