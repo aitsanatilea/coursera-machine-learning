@@ -1,4 +1,4 @@
-# Practical Macine Learning
+# Practical Machine Learning
 ## Course Project. Prediction Assignment Writeup
 
 The full HTML page can be viewed using this link:
